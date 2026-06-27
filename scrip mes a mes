@@ -1,0 +1,35 @@
+import pandas as pd
+import glob
+
+archivos = glob.glob("data_raw/*.xlsx")
+datos_consolidados = []
+
+# Hojas que queremos ignorar porque no contienen datos contables
+hojas_a_ignorar = ['INICIO'] 
+
+for f in archivos:
+    print(f"📂 Analizando: {f}")
+    xls = pd.ExcelFile(f)
+    
+    for nombre_hoja in xls.sheet_names:
+        # Evaluamos TODAS las hojas, solo saltamos las de la lista negra
+        if nombre_hoja not in hojas_a_ignorar:
+            try:
+                # Intentamos leer la hoja
+                # header=None permite que nosotros mismos encontremos los datos más adelante
+                df = pd.read_excel(xls, sheet_name=nombre_hoja, header=None)
+                
+                # Agregamos metadatos para tu auditoría
+                df['Origen_Archivo'] = f
+                df['Origen_Hoja'] = nombre_hoja
+                
+                datos_consolidados.append(df)
+                print(f"   ✅ Procesada: {nombre_hoja}")
+            except Exception as e:
+                print(f"   ⚠️ No pude procesar '{nombre_hoja}': {e}")
+
+# Consolidación final
+if datos_consolidados:
+    df_final = pd.concat(datos_consolidados, ignore_index=True)
+    df_final.to_excel('Consolidado_Auditoria_Total.xlsx', index=False)
+    print("\n🚀 ¡Éxito! Archivo 'Consolidado_Auditoria_Total.xlsx' generado con todas las hojas.")
