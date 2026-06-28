@@ -1,35 +1,534 @@
+# ============================================================
+# 📊 ANÁLISIS FINANCIERO - KING CHOLAO 2026
+# 📍 Google Colab - SCRIPT COMPLETO
+# 🔄 Actualización automática desde GitHub
+# 📅 Última actualización: 2026-06-27
+# ============================================================
+# 
+# 📌 CÓMO USAR:
+# 1. Abre https://colab.research.google.com/
+# 2. Archivo → Nuevo notebook
+# 3. Copia y pega TODO este código
+# 4. Ejecuta (Shift + Enter)
+# 5. Los resultados se generan automáticamente
+#
+# 📁 ARCHIVOS GENERADOS:
+# - analisis_king_cholao.csv (datos consolidados)
+# - Gráficos: Ventas vs Gastos, Rentabilidad, Mapa de Calor
+# - Top 10 Proveedores
+# - Resumen por mes
+# ============================================================
+
+# ============================================================
+# 1. INSTALAR DEPENDENCIAS
+# ============================================================
+!pip install openpyxl -q
+!pip install xlrd -q
+
+# ============================================================
+# 2. IMPORTAR LIBRERÍAS
+# ============================================================
 import pandas as pd
-import glob
+import numpy as np
+import requests
+import io
+import os
+import re
+from datetime import datetime
+import matplotlib.pyplot as plt
+import seaborn as sns
+import warnings
+warnings.filterwarnings('ignore')
 
-archivos = glob.glob("data_raw/*.xlsx")
-datos_consolidados = []
+print("="*70)
+print("📊 ANÁLISIS FINANCIERO - KING CHOLAO 2026")
+print("="*70)
+print(f"📅 Fecha de ejecución: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print("="*70)
 
-# Hojas que queremos ignorar porque no contienen datos contables
-hojas_a_ignorar = ['INICIO'] 
+# ============================================================
+# 3. CONFIGURACIÓN - CAMBIAR AQUÍ SI ES NECESARIO
+# ============================================================
+REPO_OWNER = "kingcholaorodadero-art"
+REPO_NAME = "kingCholao-Data"
+DATA_PATH = "data_raw"
 
-for f in archivos:
-    print(f"📂 Analizando: {f}")
-    xls = pd.ExcelFile(f)
+# ============================================================
+# 4. FUNCIONES DE EXTRACCIÓN
+# ============================================================
+
+def leer_archivo_github(file_info):
+    """Descarga y lee un archivo Excel de GitHub"""
+    try:
+        resp = requests.get(file_info['download_url'], timeout=30)
+        xls = pd.ExcelFile(io.BytesIO(resp.content))
+        return xls
+    except Exception as e:
+        print(f"  ❌ Error al descargar: {e}")
+        return None
+
+def extraer_resumen_mes(xls, mes):
+    """Extrae datos de la hoja RESUMEN MES"""
+    try:
+        if 'RESUMEN MES' not in xls.sheet_names:
+            return None
+        
+        df = pd.read_excel(xls, sheet_name='RESUMEN MES', header=None)
+        
+        datos = {
+            'Mes': mes,
+            'Ventas_Efectivo': 0,
+            'Ventas_Tarjeta': 0,
+            'Ventas_Total': 0,
+            'Gastos_Compras': 0,
+            'Gastos_Personal': 0,
+            'Gastos_Servicios': 0,
+            'Gastos_Otros': 0,
+            'Gastos_Total': 0,
+            'Ganancia': 0,
+            'Rentabilidad': 0,
+            'Accesorios': 0
+        }
+        
+        # Ventas (filas 3-5)
+        if len(df) > 5:
+            for i, col in [(3, 'Ventas_Efectivo'), (4, 'Ventas_Tarjeta'), (5, 'Ventas_Total')]:
+                if len(df) > i:
+                    fila = df.iloc[i]
+                    for x in fila:
+                        if isinstance(x, (int, float)) and x > 0:
+                            datos[col] = float(x)
+                            break
+        
+        # Gastos (fila 12)
+        if len(df) > 12:
+            fila = df.iloc[12]
+            numeros = [x for x in fila if isinstance(x, (int, float)) and x != 0]
+            if len(numeros) >= 4:
+                datos['Gastos_Compras'] = numeros[0] if len(numeros) > 0 else 0
+                datos['Gastos_Personal'] = numeros[1] if len(numeros) > 1 else 0
+                datos['Gastos_Servicios'] = numeros[2] if len(numeros) > 2 else 0
+                datos['Gastos_Otros'] = numeros[3] if len(numeros) > 3 else 0
+                datos['Gastos_Total'] = numeros[-1] if len(numeros) > 0 else 0
+        
+        # Ganancia y Rentabilidad (fila 23)
+        if len(df) > 23:
+            fila = df.iloc[23]
+            for x in fila:
+                if isinstance(x, (int, float)):
+                    datos['Ganancia'] = float(x)
+                    break
+            if len(fila) > 4:
+                x = fila.iloc[4]
+                if isinstance(x, (int, float)):
+                    datos['Rentabilidad'] = float(x) * 100 if x < 1 else float(x)
+        
+        # Accesorios (fila 25)
+        if len(df) > 25:
+            fila = df.iloc[25]
+            for x in fila:
+                if isinstance(x, (int, float)) and x > 0:
+                    datos['Accesorios'] = float(x)
+                    break
+        
+        # Calcular rentabilidad si no se encontró
+        if datos['Rentabilidad'] == 0 and datos['Ganancia'] > 0 and datos['Ventas_Total'] > 0:
+            datos['Rentabilidad'] = (datos['Ganancia'] / datos['Ventas_Total']) * 100
+        
+        return datos
+        
+    except Exception as e:
+        return None
+
+def extraer_proveedores(xls, mes):
+    """Extrae proveedores de la hoja EGRESOS"""
+    try:
+        if 'EGRESOS ' not in xls.sheet_names:
+            return {}
+        
+        df = pd.read_excel(xls, sheet_name='EGRESOS ', header=None)
+        
+        # Buscar encabezados
+        header_row = None
+        for i in range(min(15, len(df))):
+            row = df.iloc[i]
+            texto = ' '.join([str(x).lower() for x in row if pd.notna(x)])
+            if 'dia' in texto and 'tercero' in texto:
+                header_row = i
+                break
+        
+        if header_row is None:
+            return {}
+        
+        headers = df.iloc[header_row].tolist()
+        headers = [str(h).strip() if pd.notna(h) else f'Col_{j}' for j, h in enumerate(headers)]
+        
+        # Datos desde la siguiente fila
+        df_data = df.iloc[header_row + 1:].copy()
+        df_data.columns = headers
+        
+        # Identificar columnas
+        col_proveedor = None
+        col_costo = None
+        col_personal = None
+        col_servicios = None
+        col_otros = None
+        
+        for col in df_data.columns:
+            col_upper = col.upper()
+            if 'TERCERO' in col_upper:
+                col_proveedor = col
+            elif 'COSTOS' in col_upper:
+                col_costo = col
+            elif 'G. PERSONAL' in col_upper or 'PERSONAL' in col_upper:
+                col_personal = col
+            elif 'G. SERVICIOS' in col_upper or 'SERVICIOS' in col_upper:
+                col_servicios = col
+            elif 'OTROS GASTOS' in col_upper:
+                col_otros = col
+        
+        # Si no encuentra, usar nombres alternativos
+        if col_proveedor is None:
+            for col in df_data.columns:
+                if 'Col_3' in col:
+                    col_proveedor = col
+                    break
+        
+        if col_costo is None:
+            for col in df_data.columns:
+                if 'Col_5' in col:
+                    col_costo = col
+                    break
+        
+        if col_personal is None:
+            for col in df_data.columns:
+                if 'Col_6' in col:
+                    col_personal = col
+                    break
+        
+        if col_servicios is None:
+            for col in df_data.columns:
+                if 'Col_7' in col:
+                    col_servicios = col
+                    break
+        
+        if col_otros is None:
+            for col in df_data.columns:
+                if 'Col_8' in col:
+                    col_otros = col
+                    break
+        
+        if col_proveedor is None:
+            return {}
+        
+        # Convertir a numérico
+        for col in [col_costo, col_personal, col_servicios, col_otros]:
+            if col and col in df_data.columns:
+                df_data[col] = pd.to_numeric(df_data[col], errors='coerce')
+        
+        # Calcular TOTAL
+        df_data['TOTAL'] = 0
+        for col in [col_costo, col_personal, col_servicios, col_otros]:
+            if col and col in df_data.columns:
+                df_data['TOTAL'] += df_data[col].fillna(0)
+        
+        # Limpiar
+        df_data = df_data[df_data[col_proveedor].notna()]
+        df_data = df_data[df_data[col_proveedor].astype(str).str.strip() != '']
+        df_data = df_data[df_data[col_proveedor].astype(str).str.strip() != 'nan']
+        df_data = df_data[~df_data[col_proveedor].astype(str).str.contains('TOTALES|TOTAL MES|TOTAL', na=False, case=False)]
+        df_data = df_data[df_data['TOTAL'] > 0]
+        
+        # Agrupar
+        proveedores = {}
+        for prov, monto in df_data.groupby(col_proveedor)['TOTAL'].sum().items():
+            if pd.notna(prov) and str(prov).strip() and monto > 0:
+                proveedores[str(prov).strip()] = float(monto)
+        
+        return proveedores
+        
+    except Exception as e:
+        return {}
+
+def extraer_ventas_diarias(xls):
+    """Extrae ventas diarias de la hoja VENTAS"""
+    try:
+        if 'VENTAS' not in xls.sheet_names:
+            return {}
+        
+        df = pd.read_excel(xls, sheet_name='VENTAS', header=None)
+        
+        # Buscar encabezados
+        header_row = None
+        for i in range(min(15, len(df))):
+            row = df.iloc[i]
+            texto = ' '.join([str(x).lower() for x in row if pd.notna(x)])
+            if 'dia' in texto and 'forma' in texto:
+                header_row = i
+                break
+        
+        if header_row is None:
+            return {}
+        
+        headers = df.iloc[header_row].tolist()
+        headers = [str(h).strip() if pd.notna(h) else f'Col_{j}' for j, h in enumerate(headers)]
+        df_data = df.iloc[header_row + 1:].copy()
+        df_data.columns = headers
+        
+        # Buscar columnas
+        col_dia = None
+        col_monto = None
+        
+        for col in df_data.columns:
+            if 'DIA' in col.upper():
+                col_dia = col
+            if 'MONTO' in col.upper():
+                col_monto = col
+        
+        if col_dia is None or col_monto is None:
+            return {}
+        
+        df_data[col_monto] = pd.to_numeric(df_data[col_monto], errors='coerce')
+        
+        ventas = {}
+        for dia, monto in df_data.groupby(col_dia)[col_monto].sum().items():
+            if pd.notna(dia) and monto > 0:
+                try:
+                    ventas[int(dia)] = float(monto)
+                except:
+                    pass
+        
+        return ventas
+        
+    except Exception as e:
+        return {}
+
+# ============================================================
+# 5. PROCESAR TODOS LOS ARCHIVOS
+# ============================================================
+print("\n📥 Conectando a GitHub...")
+
+url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{DATA_PATH}"
+response = requests.get(url).json()
+archivos_excel = [f for f in response if f['name'].endswith('.xlsx')]
+
+print(f"✅ Encontrados {len(archivos_excel)} archivos")
+
+print("\n" + "="*70)
+print("📂 PROCESANDO ARCHIVOS")
+print("="*70)
+
+resultados = []
+
+for file in archivos_excel:
+    nombre = file['name']
+    mes = re.sub(r'EGRESOS\s*', '', nombre).replace('.xlsx', '').strip()
     
-    for nombre_hoja in xls.sheet_names:
-        # Evaluamos TODAS las hojas, solo saltamos las de la lista negra
-        if nombre_hoja not in hojas_a_ignorar:
-            try:
-                # Intentamos leer la hoja
-                # header=None permite que nosotros mismos encontremos los datos más adelante
-                df = pd.read_excel(xls, sheet_name=nombre_hoja, header=None)
-                
-                # Agregamos metadatos para tu auditoría
-                df['Origen_Archivo'] = f
-                df['Origen_Hoja'] = nombre_hoja
-                
-                datos_consolidados.append(df)
-                print(f"   ✅ Procesada: {nombre_hoja}")
-            except Exception as e:
-                print(f"   ⚠️ No pude procesar '{nombre_hoja}': {e}")
+    print(f"\n📄 {nombre}")
+    
+    xls = leer_archivo_github(file)
+    if xls is None:
+        continue
+    
+    datos = extraer_resumen_mes(xls, mes)
+    if datos:
+        datos['Proveedores'] = extraer_proveedores(xls, mes)
+        datos['Ventas_Diarias'] = extraer_ventas_diarias(xls)
+        resultados.append(datos)
+        
+        print(f"  ✅ Ventas: ${datos['Ventas_Total']:,.2f}")
+        print(f"  ✅ Gastos: ${datos['Gastos_Total']:,.2f}")
+        print(f"  ✅ Rentabilidad: {datos['Rentabilidad']:.2f}%")
+        print(f"  ✅ Proveedores: {len(datos['Proveedores'])}")
+    else:
+        print(f"  ❌ No se pudieron extraer datos")
 
-# Consolidación final
-if datos_consolidados:
-    df_final = pd.concat(datos_consolidados, ignore_index=True)
-    df_final.to_excel('Consolidado_Auditoria_Total.xlsx', index=False)
-    print("\n🚀 ¡Éxito! Archivo 'Consolidado_Auditoria_Total.xlsx' generado con todas las hojas.")
+# ============================================================
+# 6. CREAR DATAFRAME
+# ============================================================
+print("\n" + "="*70)
+print("📊 CREANDO DATAFRAME")
+print("="*70)
+
+if resultados:
+    df = pd.DataFrame([{
+        'Mes': r['Mes'],
+        'Ventas_Efectivo': r.get('Ventas_Efectivo', 0),
+        'Ventas_Tarjeta': r.get('Ventas_Tarjeta', 0),
+        'Ventas_Total': r.get('Ventas_Total', 0),
+        'Gastos_Compras': r.get('Gastos_Compras', 0),
+        'Gastos_Personal': r.get('Gastos_Personal', 0),
+        'Gastos_Servicios': r.get('Gastos_Servicios', 0),
+        'Gastos_Otros': r.get('Gastos_Otros', 0),
+        'Gastos_Total': r.get('Gastos_Total', 0),
+        'Ganancia': r.get('Ganancia', 0),
+        'Rentabilidad': r.get('Rentabilidad', 0),
+        'Accesorios': r.get('Accesorios', 0)
+    } for r in resultados])
+    
+    df = df.fillna(0)
+    
+    orden_meses = ['ENERO 2026', 'FEBRERO 2026', 'MARZO 2026', 'ABRIL 2026', 'MAYO 2026', 'JUNIO 2026']
+    df['Mes_Orden'] = pd.Categorical(df['Mes'], categories=orden_meses, ordered=True)
+    df = df.sort_values('Mes_Orden').drop('Mes_Orden', axis=1)
+    
+    print("\n📋 DATOS EXTRAÍDOS:")
+    print(df.to_string(index=False, float_format=lambda x: f'{x:,.2f}'))
+    
+    # ============================================================
+    # 7. ANÁLISIS GENERAL
+    # ============================================================
+    print("\n" + "="*70)
+    print("📊 ANÁLISIS GENERAL")
+    print("="*70)
+    
+    total_ventas = df['Ventas_Total'].sum()
+    total_gastos = df['Gastos_Total'].sum()
+    total_ganancia = df['Ganancia'].sum()
+    rentabilidad_promedio = df[df['Rentabilidad'] > 0]['Rentabilidad'].mean()
+    
+    print(f"\n📈 TOTALES 2026:")
+    print(f"  Ventas Total:   ${total_ventas:,.2f}")
+    print(f"  Gastos Total:   ${total_gastos:,.2f}")
+    print(f"  Ganancia Total: ${total_ganancia:,.2f}")
+    print(f"  Rentabilidad Promedio: {rentabilidad_promedio:.2f}%")
+    
+    if not df.empty:
+        mejor_mes = df.loc[df['Ventas_Total'].idxmax()]
+        peor_mes = df.loc[df['Ventas_Total'].idxmin()]
+        
+        print(f"\n🏆 MEJOR MES (Ventas): {mejor_mes['Mes']} (${mejor_mes['Ventas_Total']:,.2f})")
+        print(f"📉 PEOR MES (Ventas):  {peor_mes['Mes']} (${peor_mes['Ventas_Total']:,.2f})")
+        
+        if df['Rentabilidad'].max() > 0:
+            mas_rentable = df.loc[df['Rentabilidad'].idxmax()]
+            print(f"💰 MÁS RENTABLE: {mas_rentable['Mes']} ({mas_rentable['Rentabilidad']:.2f}%)")
+    
+    # ============================================================
+    # 8. TOP PROVEEDORES
+    # ============================================================
+    print("\n" + "="*70)
+    print("🏆 TOP 10 PROVEEDORES - TODOS LOS MESES")
+    print("="*70)
+    
+    proveedores_totales = {}
+    for r in resultados:
+        for prov, monto in r.get('Proveedores', {}).items():
+            if prov in proveedores_totales:
+                proveedores_totales[prov] += monto
+            else:
+                proveedores_totales[prov] = monto
+    
+    if proveedores_totales:
+        top_general = sorted(proveedores_totales.items(), key=lambda x: x[1], reverse=True)[:10]
+        for i, (prov, monto) in enumerate(top_general, 1):
+            print(f"  {i:2}. {prov[:35]:35} ${monto:>12,.2f}")
+    else:
+        print("  ⚠️ No se encontraron proveedores")
+    
+    # ============================================================
+    # 9. TOP PROVEEDORES POR MES
+    # ============================================================
+    print("\n" + "="*70)
+    print("📊 TOP 5 PROVEEDORES POR MES")
+    print("="*70)
+    
+    for r in resultados:
+        if r.get('Proveedores'):
+            print(f"\n  📅 {r['Mes']}:")
+            top_mes = sorted(r['Proveedores'].items(), key=lambda x: x[1], reverse=True)[:5]
+            for i, (prov, monto) in enumerate(top_mes, 1):
+                print(f"    {i}. {prov[:30]}: ${monto:,.2f}")
+        else:
+            print(f"\n  📅 {r['Mes']}: ⚠️ No hay proveedores")
+    
+    # ============================================================
+    # 10. GRÁFICOS
+    # ============================================================
+    print("\n" + "="*70)
+    print("📊 GENERANDO GRÁFICOS")
+    print("="*70)
+    
+    # Gráfico 1: Ventas vs Gastos
+    fig, ax = plt.subplots(figsize=(14, 7))
+    x = np.arange(len(df))
+    width = 0.35
+    
+    ax.bar(x - width/2, df['Ventas_Total'], width, label='Ventas', color='#2ecc71', alpha=0.8)
+    ax.bar(x + width/2, df['Gastos_Total'], width, label='Gastos', color='#e74c3c', alpha=0.8)
+    
+    ax.set_xlabel('Mes', fontsize=12)
+    ax.set_ylabel('Monto', fontsize=12)
+    ax.set_title('Ventas vs Gastos por Mes - 2026', fontsize=14, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(df['Mes'], rotation=45)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+    
+    # Gráfico 2: Rentabilidad
+    if df['Rentabilidad'].sum() > 0:
+        fig, ax = plt.subplots(figsize=(14, 7))
+        colors = ['#2ecc71' if x > 0 else '#e74c3c' for x in df['Rentabilidad']]
+        bars = ax.bar(df['Mes'], df['Rentabilidad'], color=colors, edgecolor='black', alpha=0.8)
+        ax.axhline(y=0, color='black', linestyle='-', linewidth=1)
+        ax.set_xlabel('Mes', fontsize=12)
+        ax.set_ylabel('Rentabilidad (%)', fontsize=12)
+        ax.set_title('Rentabilidad por Mes - 2026', fontsize=14, fontweight='bold')
+        ax.set_xticklabels(df['Mes'], rotation=45)
+        ax.grid(True, alpha=0.3)
+        
+        for bar, val in zip(bars, df['Rentabilidad']):
+            ax.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.5,
+                    f'{val:.1f}%', ha='center', va='bottom', fontsize=9)
+        
+        plt.tight_layout()
+        plt.show()
+    
+    # Gráfico 3: Mapa de Calor
+    ventas_diarias = {}
+    for r in resultados:
+        mes = r['Mes']
+        for dia, monto in r.get('Ventas_Diarias', {}).items():
+            if mes not in ventas_diarias:
+                ventas_diarias[mes] = {}
+            ventas_diarias[mes][dia] = monto
+    
+    if ventas_diarias:
+        df_calor = pd.DataFrame(ventas_diarias).fillna(0)
+        df_calor = df_calor.reindex(orden_meses, axis=1)
+        
+        plt.figure(figsize=(14, 8))
+        sns.heatmap(df_calor, 
+                    cmap='YlOrRd',
+                    annot=True, 
+                    fmt='.0f',
+                    cbar_kws={'label': 'Ventas'},
+                    linewidths=0.5,
+                    linecolor='white')
+        plt.title('🔥 Mapa de Calor - Ventas por Día y Mes', fontsize=14, fontweight='bold')
+        plt.xlabel('Mes', fontsize=12)
+        plt.ylabel('Día del Mes', fontsize=12)
+        plt.tight_layout()
+        plt.show()
+    
+    # ============================================================
+    # 11. GUARDAR DATOS
+    # ============================================================
+    print("\n" + "="*70)
+    print("💾 GUARDANDO RESULTADOS")
+    print("="*70)
+    
+    df.to_csv('analisis_king_cholao.csv', index=False)
+    print("✅ Datos guardados en: analisis_king_cholao.csv")
+    
+    from google.colab import files
+    files.download('analisis_king_cholao.csv')
+    
+else:
+    print("❌ No se pudieron procesar los archivos")
+
+print("\n" + "="*70)
+print("✅ ANÁLISIS COMPLETADO")
+print("="*70)
