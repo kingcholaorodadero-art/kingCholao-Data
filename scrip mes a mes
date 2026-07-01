@@ -47,7 +47,7 @@ print(f"📅 Fecha de ejecución: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 print("="*70)
 
 # ============================================================
-# 3. CONFIGURACIÓN - CAMBIAR AQUÍ SI ES NECESARIO
+# 3. CONFIGURACIÓN
 # ============================================================
 REPO_OWNER = "kingcholaorodadero-art"
 REPO_NAME = "kingCholao-Data"
