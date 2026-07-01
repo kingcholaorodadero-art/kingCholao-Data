@@ -4,8 +4,6 @@
 # 🔄 Filtra por año y genera PDF profesional
 # ============================================================
 
-# 1. INSTALAR DEPENDENCIAS
-!pip install openpyxl xlrd reportlab matplotlib seaborn -q
 
 # 2. IMPORTAR LIBRERÍAS
 import pandas as pd
