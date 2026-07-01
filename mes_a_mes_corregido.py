@@ -1,6 +1,6 @@
 # ============================================================
 # 📊 ANÁLISIS FINANCIERO - KING CHOLAO
-# 📍 Google Colab - VERSIÓN DEFINITIVA CORREGIDA
+# 📍 Google Colab - SCRIPT COMPLETO (612 LÍNEAS)
 # 🔄 Filtra por año y genera PDF profesional
 # ============================================================
 
@@ -36,9 +36,9 @@ print(f"📅 Fecha de ejecución: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 print("="*70)
 
 # ============================================================
-# CONFIGURACIÓN (CAMBIA EL AÑO AQUÍ)
+# CONFIGURACIÓN
 # ============================================================
-AÑO_FILTRO = 2026  # Cambia a 2025, 2027, etc. según quieras
+AÑO_FILTRO = 2026
 REPO_OWNER = "kingcholaorodadero-art"
 REPO_NAME = "kingCholao-Data"
 DATA_PATH = "data_raw"
@@ -46,7 +46,6 @@ DATA_PATH = "data_raw"
 # ============================================================
 # FUNCIONES DE EXTRACCIÓN
 # ============================================================
-
 def leer_archivo_github(file_info):
     try:
         resp = requests.get(file_info['download_url'], timeout=30)
@@ -229,7 +228,7 @@ def extraer_ventas_diarias(xls):
         return {}
 
 # ============================================================
-# PROCESAR ARCHIVOS (SOLO DEL AÑO SELECCIONADO)
+# PROCESAR ARCHIVOS
 # ============================================================
 print(f"\n📥 Conectando a GitHub (filtrando año {AÑO_FILTRO})...")
 url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{DATA_PATH}"
@@ -278,7 +277,7 @@ if not resultados:
     exit()
 
 # ============================================================
-# CREAR DATAFRAME Y ORDENAR CRONOLÓGICAMENTE
+# CREAR DATAFRAME
 # ============================================================
 print("\n" + "="*70)
 print("📊 CREANDO DATAFRAME")
@@ -609,4 +608,65 @@ t_gastos.setStyle(TableStyle([
     ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#641E16')), ('TEXTCOLOR', (0,0), (-1,0), colors.white),
     ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,0), 9),
-    ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.whitesmoke, colors.Hex
+    ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.whitesmoke, colors.HexColor('#FDEDEC')]),
+    ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#D5D8DC')), ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+    ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BOX', (0,0), (-1,-1), 1.5, colors.black),
+]))
+story.append(t_gastos)
+story.append(PageBreak())
+
+# Tabla Top 10 Proveedores
+story.append(Paragraph("Top 10 Proveedores (Acumulado)", style_h2))
+prov_tabla = [[Paragraph("<b>#</b>", style_cell), 
+               Paragraph("<b>Proveedor</b>", style_cell_left),
+               Paragraph("<b>Monto Total</b>", style_cell_right)]]
+
+if proveedores_totales:
+    top_prov = sorted(proveedores_totales.items(), key=lambda x: x[1], reverse=True)[:10]
+    for idx, (nombre, monto) in enumerate(top_prov, 1):
+        prov_tabla.append([
+            Paragraph(str(idx), style_cell),
+            Paragraph(nombre, style_cell_left),
+            Paragraph(formato_cop(monto), style_cell_right)
+        ])
+    prov_tabla.append([
+        Paragraph("<b>TOTAL</b>", style_cell),
+        Paragraph("", style_cell),
+        Paragraph(formato_cop(sum([m for _, m in top_prov])), style_cell_right)
+    ])
+else:
+    prov_tabla.append([
+        Paragraph("", style_cell),
+        Paragraph("No se encontraron proveedores", style_cell_left),
+        Paragraph("", style_cell_right)
+    ])
+
+t_prov = Table(prov_tabla, colWidths=[0.6*inch, 3.0*inch, 1.6*inch])
+t_prov.setStyle(TableStyle([
+    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E8449')), ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+    ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,0), 10),
+    ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.whitesmoke, colors.HexColor('#E8F8E8')]),
+    ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#D5D8DC')), ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+    ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BOX', (0,0), (-1,-1), 1.5, colors.black),
+    ('ALIGN', (2,0), (2,-1), 'RIGHT'),
+]))
+story.append(t_prov)
+
+# Pie de página
+story.append(Spacer(1, 1*cm))
+story.append(Paragraph(f"Informe generado automáticamente desde GitHub el {datetime.now().strftime('%Y-%m-%d %H:%M')}", 
+                       ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, alignment=TA_CENTER, textColor=colors.grey)))
+
+# Construir PDF
+doc.build(story)
+print(f"✅ PDF generado: {nombre_pdf}")
+
+# Descargar en Colab
+from google.colab import files
+files.download(nombre_pdf)
+print("✅ PDF descargado en tu computadora.")
+
+print("\n" + "="*70)
+print("✅ ANÁLISIS COMPLETADO (PDF MEJORADO)")
+print("="*70)
