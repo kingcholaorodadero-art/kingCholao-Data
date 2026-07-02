@@ -316,7 +316,6 @@ df = df.sort_values('Orden').drop('Orden', axis=1)
 
 print("\n📋 DATOS EXTRAÍDOS (ordenados):")
 print(df.to_string(index=False, float_format=lambda x: f'{x:,.2f}'))
-
 # ============================================================
 # ANÁLISIS GENERAL
 # ============================================================
@@ -582,7 +581,6 @@ t_ventas.setStyle(TableStyle([
 ]))
 story.append(t_ventas)
 story.append(Spacer(1, 0.5*cm))
-
 # Tabla Gastos
 story.append(Paragraph("Gastos Desglosados por Mes", style_h2))
 gastos_tabla = [[Paragraph("<b>Mes</b>", style_cell),
@@ -598,13 +596,4 @@ for i, m in enumerate(meses_abv):
         Paragraph(formato_cop(df['Gastos_Compras'].iloc[i]), style_cell_right),
         Paragraph(formato_cop(df['Gastos_Personal'].iloc[i]), style_cell_right),
         Paragraph(formato_cop(df['Gastos_Servicios'].iloc[i]), style_cell_right),
-        Paragraph(formato_cop(df['Gastos_Otros'].iloc[i]), style_cell_right),
-        Paragraph(formato_cop(gastos_total[i]), style_cell_right)
-    ])
-
-gastos_tabla.append([
-    Paragraph("<b>TOTAL</b>", style_cell),
-    Paragraph(formato_cop(df['
-
-
-                          
+        Paragraph(formato_cop(df['Gastos
