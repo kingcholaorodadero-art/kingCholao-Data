@@ -1,11 +1,10 @@
 # ============================================================
-# 📊 ANÁLISIS FINANCIERO - KING CHOLAO
-# 📍 Google Colab - SCRIPT COMPLETO (612 LÍNEAS)
+# 📊 ANÁLISIS FINANCIERO - KING CHOLAO (VERSIÓN LOCAL)
+# 📍 Ejecutar en Jupyter / Python local
 # 🔄 Filtra por año y genera PDF profesional
 # ============================================================
 
-
-# 2. IMPORTAR LIBRERÍAS
+# 1. IMPORTAR LIBRERÍAS
 import pandas as pd
 import numpy as np
 import requests
@@ -36,7 +35,7 @@ print("="*70)
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
-AÑO_FILTRO = 2026
+AÑO_FILTRO = None  # None = todos los años. O pon 2025, 2026, etc.
 REPO_OWNER = "kingcholaorodadero-art"
 REPO_NAME = "kingCholao-Data"
 DATA_PATH = "data_raw"
@@ -44,6 +43,7 @@ DATA_PATH = "data_raw"
 # ============================================================
 # FUNCIONES DE EXTRACCIÓN
 # ============================================================
+
 def leer_archivo_github(file_info):
     try:
         resp = requests.get(file_info['download_url'], timeout=30)
@@ -228,20 +228,21 @@ def extraer_ventas_diarias(xls):
 # ============================================================
 # PROCESAR ARCHIVOS
 # ============================================================
-print(f"\n📥 Conectando a GitHub (filtrando año {AÑO_FILTRO})...")
+print(f"\n📥 Conectando a GitHub...")
 url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{DATA_PATH}"
 response = requests.get(url).json()
 archivos_excel = [f for f in response if f['name'].endswith('.xlsx')]
 
-archivos_filtrados = []
-for f in archivos_excel:
-    if str(AÑO_FILTRO) in f['name']:
-        archivos_filtrados.append(f)
-
-print(f"✅ Encontrados {len(archivos_filtrados)} archivos para el año {AÑO_FILTRO}")
+# Filtrar por año si se especificó
+if AÑO_FILTRO is not None:
+    archivos_filtrados = [f for f in archivos_excel if str(AÑO_FILTRO) in f['name']]
+    print(f"✅ Filtrando año {AÑO_FILTRO}: {len(archivos_filtrados)} archivos")
+else:
+    archivos_filtrados = archivos_excel
+    print(f"✅ Procesando TODOS los años: {len(archivos_filtrados)} archivos")
 
 if not archivos_filtrados:
-    print(f"❌ No se encontraron archivos para el año {AÑO_FILTRO}")
+    print(f"❌ No se encontraron archivos")
     exit()
 
 print("\n" + "="*70)
@@ -253,12 +254,11 @@ resultados = []
 for file in archivos_filtrados:
     nombre = file['name']
     mes = re.sub(r'EGRESOS\s*', '', nombre).replace('.xlsx', '').strip()
-    mes = re.sub(r'\s*\d{4}', '', mes).strip()
     print(f"\n📄 {nombre} -> {mes}")
     xls = leer_archivo_github(file)
     if xls is None:
         continue
-    datos = extraer_resumen_mes(xls, mes + f" {AÑO_FILTRO}")
+    datos = extraer_resumen_mes(xls, mes)
     if datos:
         datos['Proveedores'] = extraer_proveedores(xls, mes)
         datos['Ventas_Diarias'] = extraer_ventas_diarias(xls)
@@ -275,7 +275,7 @@ if not resultados:
     exit()
 
 # ============================================================
-# CREAR DATAFRAME
+# CREAR DATAFRAME Y ORDENAR CRONOLÓGICAMENTE
 # ============================================================
 print("\n" + "="*70)
 print("📊 CREANDO DATAFRAME")
@@ -298,12 +298,21 @@ df = pd.DataFrame([{
 
 df = df.fillna(0)
 
-orden_meses = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 
-               'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE']
+# Función para extraer año y mes para ordenar
+def extraer_orden(mes):
+    partes = mes.split()
+    if len(partes) >= 2:
+        mes_nombre = partes[0]
+        año = int(partes[1])
+        # Mapeo de meses a número
+        meses_map = {'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 'MAYO': 5, 'JUNIO': 6,
+                     'JULIO': 7, 'AGOSTO': 8, 'SEPTIEMBRE': 9, 'OCTUBRE': 10, 'NOVIEMBRE': 11, 'DICIEMBRE': 12}
+        mes_num = meses_map.get(mes_nombre, 99)
+        return año * 100 + mes_num
+    return 9999
 
-df['Mes_Solo'] = df['Mes'].str.replace(f' {AÑO_FILTRO}', '')
-df['Mes_Orden'] = pd.Categorical(df['Mes_Solo'], categories=orden_meses, ordered=True)
-df = df.sort_values('Mes_Orden').drop(['Mes_Orden', 'Mes_Solo'], axis=1)
+df['Orden'] = df['Mes'].apply(extraer_orden)
+df = df.sort_values('Orden').drop('Orden', axis=1)
 
 print("\n📋 DATOS EXTRAÍDOS (ordenados):")
 print(df.to_string(index=False, float_format=lambda x: f'{x:,.2f}'))
@@ -320,7 +329,7 @@ total_gastos = df['Gastos_Total'].sum()
 total_ganancia = df['Ganancia'].sum()
 rentabilidad_promedio = df[df['Rentabilidad'] > 0]['Rentabilidad'].mean()
 
-print(f"\n📈 TOTALES {AÑO_FILTRO}:")
+print(f"\n📈 TOTALES GENERALES:")
 print(f"  Ventas Total:   ${total_ventas:,.2f}")
 print(f"  Gastos Total:   ${total_gastos:,.2f}")
 print(f"  Ganancia Total: ${total_ganancia:,.2f}")
@@ -383,7 +392,7 @@ ax.bar(x - width/2, df['Ventas_Total'], width, label='Ventas', color='#2ecc71', 
 ax.bar(x + width/2, df['Gastos_Total'], width, label='Gastos', color='#e74c3c', alpha=0.8)
 ax.set_xlabel('Mes', fontsize=12)
 ax.set_ylabel('Monto', fontsize=12)
-ax.set_title(f'Ventas vs Gastos por Mes - {AÑO_FILTRO}', fontsize=14, fontweight='bold')
+ax.set_title('Ventas vs Gastos por Mes', fontsize=14, fontweight='bold')
 ax.set_xticks(x)
 ax.set_xticklabels(meses_abv, rotation=45)
 ax.legend()
@@ -400,7 +409,7 @@ if df['Rentabilidad'].sum() > 0:
     ax.axhline(y=0, color='black', linestyle='-', linewidth=1)
     ax.set_xlabel('Mes', fontsize=12)
     ax.set_ylabel('Rentabilidad (%)', fontsize=12)
-    ax.set_title(f'Rentabilidad por Mes - {AÑO_FILTRO}', fontsize=14, fontweight='bold')
+    ax.set_title('Rentabilidad por Mes', fontsize=14, fontweight='bold')
     ax.set_xticklabels(meses_abv, rotation=45)
     ax.grid(True, alpha=0.3)
     for bar, val in zip(bars, df['Rentabilidad']):
@@ -409,7 +418,7 @@ if df['Rentabilidad'].sum() > 0:
     plt.tight_layout()
     plt.show()
 
-# Gráfico 3: Mapa de Calor
+# Gráfico 3: Mapa de Calor (TODOS los meses con datos)
 ventas_diarias = {}
 for r in resultados:
     mes = r['Mes']
@@ -424,13 +433,14 @@ if ventas_diarias:
     for mes, datos in ventas_diarias.items():
         df_calor[mes] = pd.Series(datos)
     df_calor = df_calor.fillna(0)
+    # Ordenar columnas según el orden del DataFrame
     columnas_ordenadas = [m for m in df['Mes'].tolist() if m in df_calor.columns]
     if columnas_ordenadas:
         df_calor = df_calor[columnas_ordenadas]
     fig3, ax = plt.subplots(figsize=(14, 8))
     sns.heatmap(df_calor, cmap='YlOrRd', annot=True, fmt='.0f',
                 cbar_kws={'label': 'Ventas ($)'}, linewidths=0.5, linecolor='white')
-    plt.title(f'🔥 Mapa de Calor - Ventas por Día y Mes ({AÑO_FILTRO})', fontsize=14, fontweight='bold')
+    plt.title('🔥 Mapa de Calor - Ventas por Día y Mes', fontsize=14, fontweight='bold')
     plt.xlabel('Mes', fontsize=12)
     plt.ylabel('Día del Mes', fontsize=12)
     plt.tight_layout()
@@ -456,7 +466,7 @@ print("\n" + "="*70)
 print("📄 GENERANDO INFORME PDF")
 print("="*70)
 
-nombre_pdf = f"Informe_King_Cholao_{AÑO_FILTRO}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+nombre_pdf = f"Informe_King_Cholao_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
 doc = SimpleDocTemplate(nombre_pdf, pagesize=letter,
                         rightMargin=0.75*cm, leftMargin=0.75*cm,
                         topMargin=1*cm, bottomMargin=1*cm)
@@ -472,7 +482,7 @@ style_cell_left = ParagraphStyle('CellLeft', parent=styles['Normal'], fontSize=8
 story = []
 
 story.append(Paragraph("KING CHOLAO", style_title))
-story.append(Paragraph(f"INFORME FINANCIERO - {AÑO_FILTRO}", style_subtitle))
+story.append(Paragraph(f"INFORME FINANCIERO - {datetime.now().year}", style_subtitle))
 story.append(Spacer(1, 0.3*cm))
 
 # KPI
@@ -604,67 +614,4 @@ gastos_tabla.append([
 t_gastos = Table(gastos_tabla, colWidths=[1.0*inch, 1.2*inch, 1.2*inch, 1.2*inch, 1.0*inch, 1.2*inch])
 t_gastos.setStyle(TableStyle([
     ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#641E16')), ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-    ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,0), 9),
-    ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.whitesmoke, colors.HexColor('#FDEDEC')]),
-    ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#D5D8DC')), ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-    ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BOX', (0,0), (-1,-1), 1.5, colors.black),
-]))
-story.append(t_gastos)
-story.append(PageBreak())
-
-# Tabla Top 10 Proveedores
-story.append(Paragraph("Top 10 Proveedores (Acumulado)", style_h2))
-prov_tabla = [[Paragraph("<b>#</b>", style_cell), 
-               Paragraph("<b>Proveedor</b>", style_cell_left),
-               Paragraph("<b>Monto Total</b>", style_cell_right)]]
-
-if proveedores_totales:
-    top_prov = sorted(proveedores_totales.items(), key=lambda x: x[1], reverse=True)[:10]
-    for idx, (nombre, monto) in enumerate(top_prov, 1):
-        prov_tabla.append([
-            Paragraph(str(idx), style_cell),
-            Paragraph(nombre, style_cell_left),
-            Paragraph(formato_cop(monto), style_cell_right)
-        ])
-    prov_tabla.append([
-        Paragraph("<b>TOTAL</b>", style_cell),
-        Paragraph("", style_cell),
-        Paragraph(formato_cop(sum([m for _, m in top_prov])), style_cell_right)
-    ])
-else:
-    prov_tabla.append([
-        Paragraph("", style_cell),
-        Paragraph("No se encontraron proveedores", style_cell_left),
-        Paragraph("", style_cell_right)
-    ])
-
-t_prov = Table(prov_tabla, colWidths=[0.6*inch, 3.0*inch, 1.6*inch])
-t_prov.setStyle(TableStyle([
-    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1E8449')), ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-    ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,0), 10),
-    ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.whitesmoke, colors.HexColor('#E8F8E8')]),
-    ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#D5D8DC')), ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-    ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BOX', (0,0), (-1,-1), 1.5, colors.black),
-    ('ALIGN', (2,0), (2,-1), 'RIGHT'),
-]))
-story.append(t_prov)
-
-# Pie de página
-story.append(Spacer(1, 1*cm))
-story.append(Paragraph(f"Informe generado automáticamente desde GitHub el {datetime.now().strftime('%Y-%m-%d %H:%M')}", 
-                       ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, alignment=TA_CENTER, textColor=colors.grey)))
-
-# Construir PDF
-doc.build(story)
-print(f"✅ PDF generado: {nombre_pdf}")
-
-# Descargar en Colab
-from google.colab import files
-files.download(nombre_pdf)
-print("✅ PDF descargado en tu computadora.")
-
-print("\n" + "="*70)
-print("✅ ANÁLISIS COMPLETADO (PDF MEJORADO)")
-print("="*70)
+    ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE
