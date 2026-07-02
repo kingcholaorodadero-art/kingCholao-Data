@@ -604,14 +604,7 @@ for i, m in enumerate(meses_abv):
 
 gastos_tabla.append([
     Paragraph("<b>TOTAL</b>", style_cell),
-    Paragraph(formato_cop(df['Gastos_Compras'].sum()), style_cell_right),
-    Paragraph(formato_cop(df['Gastos_Personal'].sum()), style_cell_right),
-    Paragraph(formato_cop(df['Gastos_Servicios'].sum()), style_cell_right),
-    Paragraph(formato_cop(df['Gastos_Otros'].sum()), style_cell_right),
-    Paragraph(formato_cop(total_gastos), style_cell_right)
-])
+    Paragraph(formato_cop(df['
 
-t_gastos = Table(gastos_tabla, colWidths=[1.0*inch, 1.2*inch, 1.2*inch, 1.2*inch, 1.0*inch, 1.2*inch])
-t_gastos.setStyle(TableStyle([
-    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#641E16')), ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-    ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE
+
+                          
