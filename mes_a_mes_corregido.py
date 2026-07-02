@@ -1,614 +1,266 @@
-# ============================================================
-# 📊 ANÁLISIS FINANCIERO - KING CHOLAO (VERSIÓN LOCAL)
-# 📍 Ejecutar en Jupyter / Python local
-# 🔄 Filtra por año y genera PDF profesional
-# ============================================================
+# ============================================
+# 📊 ANÁLISIS DE HORARIOS - KINGCHOLAO
+# ============================================
 
-# 1. IMPORTAR LIBRERÍAS
 import pandas as pd
 import numpy as np
-import requests
-import io
-import os
-import re
-from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
-import warnings
-warnings.filterwarnings('ignore')
+from datetime import datetime
 
-from reportlab.lib.pagesizes import letter
-from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch, cm
-from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
-import matplotlib
-matplotlib.use('Agg')
+print("="*60)
+print("📊 ANÁLISIS DE HORARIOS - KINGCHOLAO")
+print("="*60)
 
-print("="*70)
-print("📊 ANÁLISIS FINANCIERO - KING CHOLAO")
-print("="*70)
-print(f"📅 Fecha de ejecución: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print("="*70)
+# ============================================
+# 1. PREPARAR DATOS DE HORA
+# ============================================
 
-# ============================================================
-# CONFIGURACIÓN
-# ============================================================
-AÑO_FILTRO = None  # None = todos los años. O pon 2025, 2026, etc.
-REPO_OWNER = "kingcholaorodadero-art"
-REPO_NAME = "kingCholao-Data"
-DATA_PATH = "data_raw"
-
-# ============================================================
-# FUNCIONES DE EXTRACCIÓN
-# ============================================================
-
-def leer_archivo_github(file_info):
-    try:
-        resp = requests.get(file_info['download_url'], timeout=30)
-        xls = pd.ExcelFile(io.BytesIO(resp.content))
-        return xls
-    except Exception as e:
-        print(f"  ❌ Error al descargar: {e}")
-        return None
-
-def extraer_resumen_mes(xls, mes):
-    try:
-        if 'RESUMEN MES' not in xls.sheet_names:
-            return None
-        df = pd.read_excel(xls, sheet_name='RESUMEN MES', header=None)
-        datos = {
-            'Mes': mes,
-            'Ventas_Efectivo': 0,
-            'Ventas_Tarjeta': 0,
-            'Ventas_Total': 0,
-            'Gastos_Compras': 0,
-            'Gastos_Personal': 0,
-            'Gastos_Servicios': 0,
-            'Gastos_Otros': 0,
-            'Gastos_Total': 0,
-            'Ganancia': 0,
-            'Rentabilidad': 0,
-            'Accesorios': 0
-        }
-        if len(df) > 5:
-            for i, col in [(3, 'Ventas_Efectivo'), (4, 'Ventas_Tarjeta'), (5, 'Ventas_Total')]:
-                if len(df) > i:
-                    fila = df.iloc[i]
-                    for x in fila:
-                        if isinstance(x, (int, float)) and x > 0:
-                            datos[col] = float(x)
-                            break
-        if len(df) > 12:
-            fila = df.iloc[12]
-            if len(fila) > 4:
-                datos['Gastos_Compras'] = float(fila.iloc[4]) if isinstance(fila.iloc[4], (int, float)) and fila.iloc[4] != 0 else 0
-            if len(fila) > 5:
-                datos['Gastos_Personal'] = float(fila.iloc[5]) if isinstance(fila.iloc[5], (int, float)) and fila.iloc[5] != 0 else 0
-            if len(fila) > 6:
-                datos['Gastos_Servicios'] = float(fila.iloc[6]) if isinstance(fila.iloc[6], (int, float)) and fila.iloc[6] != 0 else 0
-            if len(fila) > 7:
-                datos['Gastos_Otros'] = float(fila.iloc[7]) if isinstance(fila.iloc[7], (int, float)) and fila.iloc[7] != 0 else 0
-            if len(fila) > 8:
-                datos['Gastos_Total'] = float(fila.iloc[8]) if isinstance(fila.iloc[8], (int, float)) and fila.iloc[8] != 0 else 0
-            if datos['Gastos_Total'] == 0:
-                datos['Gastos_Total'] = datos['Gastos_Compras'] + datos['Gastos_Personal'] + datos['Gastos_Servicios'] + datos['Gastos_Otros']
-        if len(df) > 23:
-            fila = df.iloc[23]
-            if len(fila) > 3:
-                x = fila.iloc[3]
-                if isinstance(x, (int, float)):
-                    datos['Ganancia'] = float(x)
-            if len(fila) > 4:
-                x = fila.iloc[4]
-                if isinstance(x, (int, float)):
-                    if x < 1:
-                        datos['Rentabilidad'] = float(x) * 100
-                    else:
-                        datos['Rentabilidad'] = float(x)
-        if datos['Ganancia'] == 0 and datos['Ventas_Total'] > 0 and datos['Gastos_Total'] > 0:
-            datos['Ganancia'] = datos['Ventas_Total'] - datos['Gastos_Total']
-            if datos['Ventas_Total'] > 0:
-                datos['Rentabilidad'] = (datos['Ganancia'] / datos['Ventas_Total']) * 100
-        return datos
-    except Exception as e:
-        print(f"  ⚠️ Error en {mes}: {e}")
-        return None
-
-def extraer_proveedores(xls, mes):
-    try:
-        hoja_egresos = None
-        for sheet in xls.sheet_names:
-            if 'EGRESOS' in sheet.upper():
-                hoja_egresos = sheet
-                break
-        if hoja_egresos is None:
-            return {}
-        df = pd.read_excel(xls, sheet_name=hoja_egresos, header=None)
-        header_row = None
-        for i in range(min(15, len(df))):
-            texto = ' '.join([str(x).lower() for x in df.iloc[i] if pd.notna(x)])
-            if 'dia' in texto and 'tercero' in texto:
-                header_row = i
-                break
-        if header_row is None:
-            return {}
-        headers = df.iloc[header_row].tolist()
-        headers = [str(h).strip() if pd.notna(h) else f'Col_{j}' for j, h in enumerate(headers)]
-        df_data = df.iloc[header_row + 1:].copy()
-        df_data.columns = headers
-        col_proveedor = None
-        col_costo = None
-        col_personal = None
-        col_servicios = None
-        col_otros = None
-        for col in df_data.columns:
-            col_upper = col.upper()
-            if 'TERCERO' in col_upper:
-                col_proveedor = col
-            elif 'COSTOS' in col_upper and 'PERSONAL' not in col_upper and 'SERVICIOS' not in col_upper:
-                col_costo = col
-            elif 'PERSONAL' in col_upper:
-                col_personal = col
-            elif 'SERVICIOS' in col_upper:
-                col_servicios = col
-            elif 'OTROS' in col_upper:
-                col_otros = col
-        if col_proveedor is None:
-            col_proveedor = df_data.columns[3] if len(df_data.columns) > 3 else None
-        if col_costo is None:
-            col_costo = df_data.columns[5] if len(df_data.columns) > 5 else None
-        if col_personal is None:
-            col_personal = df_data.columns[6] if len(df_data.columns) > 6 else None
-        if col_servicios is None:
-            col_servicios = df_data.columns[7] if len(df_data.columns) > 7 else None
-        if col_otros is None:
-            col_otros = df_data.columns[8] if len(df_data.columns) > 8 else None
-        if col_proveedor is None:
-            return {}
-        for col in [col_costo, col_personal, col_servicios, col_otros]:
-            if col and col in df_data.columns:
-                df_data[col] = pd.to_numeric(df_data[col], errors='coerce')
-        df_data['TOTAL'] = 0
-        for col in [col_costo, col_personal, col_servicios, col_otros]:
-            if col and col in df_data.columns:
-                df_data['TOTAL'] += df_data[col].fillna(0)
-        df_data = df_data[df_data[col_proveedor].notna()]
-        df_data = df_data[df_data[col_proveedor].astype(str).str.strip() != '']
-        df_data = df_data[df_data[col_proveedor].astype(str).str.strip() != 'nan']
-        df_data = df_data[~df_data[col_proveedor].astype(str).str.contains('TOTALES|TOTAL MES|TOTAL', na=False, case=False)]
-        df_data = df_data[df_data['TOTAL'] > 0]
-        proveedores = {}
-        for prov, monto in df_data.groupby(col_proveedor)['TOTAL'].sum().items():
-            if pd.notna(prov) and str(prov).strip() and monto > 0:
-                proveedores[str(prov).strip()] = float(monto)
-        return proveedores
-    except Exception as e:
-        return {}
-
-def extraer_ventas_diarias(xls):
-    try:
-        if 'VENTAS' not in xls.sheet_names:
-            return {}
-        df = pd.read_excel(xls, sheet_name='VENTAS', header=None)
-        header_row = None
-        for i in range(min(15, len(df))):
-            texto = ' '.join([str(x).lower() for x in df.iloc[i] if pd.notna(x)])
-            if 'dia' in texto and 'forma' in texto:
-                header_row = i
-                break
-        if header_row is None:
-            return {}
-        headers = df.iloc[header_row].tolist()
-        headers = [str(h).strip() if pd.notna(h) else f'Col_{j}' for j, h in enumerate(headers)]
-        df_data = df.iloc[header_row + 1:].copy()
-        df_data.columns = headers
-        col_dia = None
-        col_monto = None
-        for col in df_data.columns:
-            if 'DIA' in col.upper():
-                col_dia = col
-            if 'MONTO' in col.upper():
-                col_monto = col
-        if col_dia is None or col_monto is None:
-            return {}
-        df_data[col_monto] = pd.to_numeric(df_data[col_monto], errors='coerce')
-        ventas = {}
-        for dia, monto in df_data.groupby(col_dia)[col_monto].sum().items():
-            if pd.notna(dia) and monto > 0:
-                try:
-                    ventas[int(dia)] = float(monto)
-                except:
-                    pass
-        return ventas
-    except Exception as e:
-        return {}
-
-# ============================================================
-# PROCESAR ARCHIVOS
-# ============================================================
-print(f"\n📥 Conectando a GitHub...")
-url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{DATA_PATH}"
-response = requests.get(url).json()
-archivos_excel = [f for f in response if f['name'].endswith('.xlsx')]
-
-# Filtrar por año si se especificó
-if AÑO_FILTRO is not None:
-    archivos_filtrados = [f for f in archivos_excel if str(AÑO_FILTRO) in f['name']]
-    print(f"✅ Filtrando año {AÑO_FILTRO}: {len(archivos_filtrados)} archivos")
-else:
-    archivos_filtrados = archivos_excel
-    print(f"✅ Procesando TODOS los años: {len(archivos_filtrados)} archivos")
-
-if not archivos_filtrados:
-    print(f"❌ No se encontraron archivos")
+# Verificar que existe la columna 'hora'
+if 'hora' not in df.columns:
+    print("❌ No se encontró la columna 'hora'")
+    print("📋 Columnas disponibles:", list(df.columns))
+    # Buscar columnas similares
+    for col in df.columns:
+        if 'hora' in col.lower():
+            print(f"   ¿Quisiste usar '{col}'?")
     exit()
 
-print("\n" + "="*70)
-print("📂 PROCESANDO ARCHIVOS")
-print("="*70)
+print("\n⏰ Procesando datos de hora...")
 
-resultados = []
+# Convertir hora a formato datetime
+df['hora_dt'] = pd.to_datetime(df['hora'], format='%H:%M:%S', errors='coerce')
 
-for file in archivos_filtrados:
-    nombre = file['name']
-    mes = re.sub(r'EGRESOS\s*', '', nombre).replace('.xlsx', '').strip()
-    print(f"\n📄 {nombre} -> {mes}")
-    xls = leer_archivo_github(file)
-    if xls is None:
-        continue
-    datos = extraer_resumen_mes(xls, mes)
-    if datos:
-        datos['Proveedores'] = extraer_proveedores(xls, mes)
-        datos['Ventas_Diarias'] = extraer_ventas_diarias(xls)
-        resultados.append(datos)
-        print(f"  ✅ Ventas: ${datos['Ventas_Total']:,.2f}")
-        print(f"  ✅ Gastos: ${datos['Gastos_Total']:,.2f}")
-        print(f"  ✅ Rentabilidad: {datos['Rentabilidad']:.2f}%")
-        print(f"  ✅ Proveedores: {len(datos['Proveedores'])}")
-    else:
-        print(f"  ❌ No se pudieron extraer datos")
-
-if not resultados:
-    print("❌ No se procesó ningún archivo")
-    exit()
-
-# ============================================================
-# CREAR DATAFRAME Y ORDENAR CRONOLÓGICAMENTE
-# ============================================================
-print("\n" + "="*70)
-print("📊 CREANDO DATAFRAME")
-print("="*70)
-
-df = pd.DataFrame([{
-    'Mes': r['Mes'],
-    'Ventas_Efectivo': r.get('Ventas_Efectivo', 0),
-    'Ventas_Tarjeta': r.get('Ventas_Tarjeta', 0),
-    'Ventas_Total': r.get('Ventas_Total', 0),
-    'Gastos_Compras': r.get('Gastos_Compras', 0),
-    'Gastos_Personal': r.get('Gastos_Personal', 0),
-    'Gastos_Servicios': r.get('Gastos_Servicios', 0),
-    'Gastos_Otros': r.get('Gastos_Otros', 0),
-    'Gastos_Total': r.get('Gastos_Total', 0),
-    'Ganancia': r.get('Ganancia', 0),
-    'Rentabilidad': r.get('Rentabilidad', 0),
-    'Accesorios': r.get('Accesorios', 0)
-} for r in resultados])
-
-df = df.fillna(0)
-
-# Función para extraer año y mes para ordenar
-def extraer_orden(mes):
-    partes = mes.split()
-    if len(partes) >= 2:
-        mes_nombre = partes[0]
-        año = int(partes[1])
-        # Mapeo de meses a número
-        meses_map = {'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 'MAYO': 5, 'JUNIO': 6,
-                     'JULIO': 7, 'AGOSTO': 8, 'SEPTIEMBRE': 9, 'OCTUBRE': 10, 'NOVIEMBRE': 11, 'DICIEMBRE': 12}
-        mes_num = meses_map.get(mes_nombre, 99)
-        return año * 100 + mes_num
-    return 9999
-
-df['Orden'] = df['Mes'].apply(extraer_orden)
-df = df.sort_values('Orden').drop('Orden', axis=1)
-
-print("\n📋 DATOS EXTRAÍDOS (ordenados):")
-print(df.to_string(index=False, float_format=lambda x: f'{x:,.2f}'))
-
-# ============================================================
-# ANÁLISIS GENERAL
-# ============================================================
-print("\n" + "="*70)
-print("📊 ANÁLISIS GENERAL")
-print("="*70)
-
-total_ventas = df['Ventas_Total'].sum()
-total_gastos = df['Gastos_Total'].sum()
-total_ganancia = df['Ganancia'].sum()
-rentabilidad_promedio = df[df['Rentabilidad'] > 0]['Rentabilidad'].mean()
-
-print(f"\n📈 TOTALES GENERALES:")
-print(f"  Ventas Total:   ${total_ventas:,.2f}")
-print(f"  Gastos Total:   ${total_gastos:,.2f}")
-print(f"  Ganancia Total: ${total_ganancia:,.2f}")
-print(f"  Rentabilidad Promedio: {rentabilidad_promedio:.2f}%")
-
-if not df.empty:
-    mejor_mes = df.loc[df['Ventas_Total'].idxmax()]
-    peor_mes = df.loc[df['Ventas_Total'].idxmin()]
-    print(f"\n🏆 MEJOR MES (Ventas): {mejor_mes['Mes']} (${mejor_mes['Ventas_Total']:,.2f})")
-    print(f"📉 PEOR MES (Ventas):  {peor_mes['Mes']} (${peor_mes['Ventas_Total']:,.2f})")
-    if df['Rentabilidad'].max() > 0:
-        mas_rentable = df.loc[df['Rentabilidad'].idxmax()]
-        print(f"💰 MÁS RENTABLE: {mas_rentable['Mes']} ({mas_rentable['Rentabilidad']:.2f}%)")
-
-# ============================================================
-# TOP PROVEEDORES
-# ============================================================
-print("\n" + "="*70)
-print("🏆 TOP 10 PROVEEDORES - TODOS LOS MESES")
-print("="*70)
-
-proveedores_totales = {}
-for r in resultados:
-    for prov, monto in r.get('Proveedores', {}).items():
-        proveedores_totales[prov] = proveedores_totales.get(prov, 0) + monto
-
-if proveedores_totales:
-    top_general = sorted(proveedores_totales.items(), key=lambda x: x[1], reverse=True)[:10]
-    for i, (prov, monto) in enumerate(top_general, 1):
-        print(f"  {i:2}. {prov[:35]:35} ${monto:>12,.2f}")
+# Si falla, intentar extraer solo la hora
+if df['hora_dt'].isna().all():
+    print("   ⚠️ Formato de hora no estándar, extrayendo hora...")
+    df['hora_num'] = df['hora'].astype(str).str.split(':').str[0].astype(float)
 else:
-    print("  ⚠️ No se encontraron proveedores")
+    df['hora_num'] = df['hora_dt'].dt.hour + df['hora_dt'].dt.minute/60
 
-# ============================================================
-# GRÁFICOS
-# ============================================================
-print("\n" + "="*70)
-print("📊 GENERANDO GRÁFICOS")
-print("="*70)
+# Filtrar horas válidas (6 AM a 11 PM)
+df_horas = df[(df['hora_num'] >= 6) & (df['hora_num'] <= 23)].copy()
+print(f"✅ Horas procesadas: {len(df_horas):,} registros")
 
-meses_pdf = df['Mes'].tolist()
-meses_abv = []
-for m in meses_pdf:
-    partes = m.split()
-    if len(partes) >= 2:
-        mes_abv = partes[0][:3] + '-' + partes[1][-2:]
-        meses_abv.append(mes_abv)
+# ============================================
+# 2. ANÁLISIS POR HORA
+# ============================================
+print("\n" + "="*60)
+print("📊 VENTAS POR HORA")
+print("="*60)
+
+# Agrupar por hora
+ventas_por_hora = df_horas.groupby(df_horas['hora_num'].astype(int))['total'].sum()
+facturas_por_hora = df_horas.groupby(df_horas['hora_num'].astype(int))['idfactura'].count()
+promedio_por_hora = ventas_por_hora / facturas_por_hora
+
+# Mostrar todas las horas
+print("\n📋 VENTAS POR HORA (TODOS LOS DÍAS):")
+print("-"*50)
+for hora in range(6, 24):
+    if hora in ventas_por_hora.index:
+        ventas = ventas_por_hora[hora]
+        facturas = facturas_por_hora[hora]
+        promedio = promedio_por_hora[hora]
+        print(f"   {hora:02d}:00 - ${ventas:,.2f} ({facturas:.0f} facturas) - Promedio: ${promedio:,.2f}")
     else:
-        meses_abv.append(m[:3])
+        print(f"   {hora:02d}:00 - Sin datos")
 
-ventas_total = df['Ventas_Total'].tolist()
-gastos_total = df['Gastos_Total'].tolist()
-rentabilidad = df['Rentabilidad'].tolist()
+# ============================================
+# 3. TOP HORAS
+# ============================================
+print("\n" + "="*60)
+print("🏆 TOP 10 HORAS CON MÁS VENTAS")
+print("="*60)
 
-# Gráfico 1: Ventas vs Gastos
-fig1, ax = plt.subplots(figsize=(12, 6))
-x = np.arange(len(df))
-width = 0.35
-ax.bar(x - width/2, df['Ventas_Total'], width, label='Ventas', color='#2ecc71', alpha=0.8)
-ax.bar(x + width/2, df['Gastos_Total'], width, label='Gastos', color='#e74c3c', alpha=0.8)
-ax.set_xlabel('Mes', fontsize=12)
-ax.set_ylabel('Monto', fontsize=12)
-ax.set_title('Ventas vs Gastos por Mes', fontsize=14, fontweight='bold')
-ax.set_xticks(x)
-ax.set_xticklabels(meses_abv, rotation=45)
-ax.legend()
-ax.grid(True, alpha=0.3)
+top_horas = ventas_por_hora.sort_values(ascending=False).head(10)
+for i, (hora, monto) in enumerate(top_horas.items(), 1):
+    facturas = facturas_por_hora[hora]
+    promedio = promedio_por_hora[hora]
+    print(f"   {i:2d}. {hora:02d}:00 - ${monto:,.2f} ({facturas:.0f} facturas) - Promedio: ${promedio:,.2f}")
+
+# ============================================
+# 4. HORAS CON MENOS VENTAS
+# ============================================
+print("\n" + "="*60)
+print("⏰ HORAS CON MENOS VENTAS (Posibles para cerrar)")
+print("="*60)
+
+horas_bajas = ventas_por_hora.sort_values().head(5)
+for hora, monto in horas_bajas.items():
+    facturas = facturas_por_hora[hora]
+    promedio = promedio_por_hora[hora]
+    print(f"   {hora:02d}:00 - ${monto:,.2f} ({facturas:.0f} facturas) - Promedio: ${promedio:,.2f}")
+
+# ============================================
+# 5. ANÁLISIS POR FRANJAS HORARIAS
+# ============================================
+print("\n" + "="*60)
+print("📅 ANÁLISIS POR FRANJAS HORARIAS")
+print("="*60)
+
+def get_franja(hora):
+    if pd.isna(hora):
+        return "Sin hora"
+    elif 6 <= hora < 9: return "Madrugada (6-9)"
+    elif 9 <= hora < 12: return "Mañana (9-12)"
+    elif 12 <= hora < 15: return "Mediodía (12-15)"
+    elif 15 <= hora < 18: return "Tarde (15-18)"
+    elif 18 <= hora < 21: return "Noche (18-21)"
+    elif 21 <= hora < 24: return "Noche avanzada (21-24)"
+    else: return "Madrugada (0-6)"
+
+df_horas['franja'] = df_horas['hora_num'].apply(get_franja)
+
+franjas = df_horas.groupby('franja').agg({
+    'total': 'sum',
+    'idfactura': 'count'
+}).sort_values('total', ascending=False)
+
+print("\n📊 VENTAS POR FRANJA HORARIA:")
+print("-"*50)
+for franja, row in franjas.iterrows():
+    if franja != "Sin hora":
+        porcentaje = (row['total'] / ventas_totales) * 100
+        print(f"   {franja}: ${row['total']:,.2f} ({row['idfactura']:.0f} facturas) - {porcentaje:.1f}% del total")
+
+# ============================================
+# 6. RECOMENDACIÓN DE HORARIO
+# ============================================
+print("\n" + "="*60)
+print("💡 RECOMENDACIÓN DE HORARIO PARA 42 HORAS SEMANALES")
+print("="*60)
+
+# Calcular estadísticas
+total_ventas_horas = ventas_por_hora.sum()
+horas_con_ventas = len([h for h in ventas_por_hora.index if ventas_por_hora[h] > 0])
+promedio_ventas_hora = total_ventas_horas / horas_con_ventas if horas_con_ventas > 0 else 0
+
+print(f"\n📊 Estadísticas de horarios:")
+print(f"   • Total de horas con ventas: {horas_con_ventas}")
+print(f"   • Promedio de ventas por hora: ${promedio_ventas_hora:,.2f}")
+
+# Identificar horas pico y valle
+horas_pico = ventas_por_hora.sort_values(ascending=False).head(3)
+horas_valle = ventas_por_hora.sort_values().head(3)
+
+print(f"\n📈 Horas PICO (NO cerrar):")
+for hora, monto in horas_pico.items():
+    facturas = facturas_por_hora[hora]
+    print(f"   • {hora:02d}:00 - ${monto:,.2f} ({facturas:.0f} facturas)")
+
+print(f"\n📉 Horas VALLE (Posibles para cerrar):")
+for hora, monto in horas_valle.items():
+    facturas = facturas_por_hora[hora]
+    print(f"   • {hora:02d}:00 - ${monto:,.2f} ({facturas:.0f} facturas)")
+
+# ============================================
+# 7. CALCULAR HORAS ÓPTIMAS
+# ============================================
+print("\n" + "="*60)
+print("⏰ CÁLCULO DE HORAS ÓPTIMAS")
+print("="*60)
+
+# Calcular el promedio de ventas por hora en cada franja
+ventas_por_hora_agrupadas = df_horas.groupby(df_horas['hora_num'].astype(int))['total'].sum()
+horas_ordenadas = ventas_por_hora_agrupadas.sort_values(ascending=False)
+
+# Seleccionar las 42 horas más productivas de la semana
+# (6 días x 7 horas = 42 horas)
+horas_seleccionadas = horas_ordenadas.head(42).index.tolist()
+horas_seleccionadas.sort()
+
+print(f"\n📋 Las 42 horas más productivas de la semana son:")
+print("-"*40)
+for i, hora in enumerate(horas_seleccionadas, 1):
+    monto = ventas_por_hora[hora] if hora in ventas_por_hora.index else 0
+    facturas = facturas_por_hora[hora] if hora in facturas_por_hora.index else 0
+    print(f"   {i:2d}. {hora:02d}:00 - ${monto:,.2f} ({facturas:.0f} facturas)")
+
+# ============================================
+# 8. VISUALIZACIONES
+# ============================================
+print("\n📈 Generando gráficos de horarios...")
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+fig.suptitle('📊 ANÁLISIS DE HORARIOS - KINGCHOLAO', fontsize=16, fontweight='bold')
+
+# Gráfico 1: Ventas por hora
+horas = sorted([h for h in ventas_por_hora.index if not pd.isna(h)])
+valores = [ventas_por_hora[h] for h in horas]
+
+axes[0,0].bar(horas, valores, color='skyblue', edgecolor='navy')
+axes[0,0].set_title('💰 Ventas por Hora del Día', fontweight='bold')
+axes[0,0].set_xlabel('Hora')
+axes[0,0].set_ylabel('Ventas ($)')
+axes[0,0].set_xticks(range(6, 24, 2))
+axes[0,0].grid(axis='y', alpha=0.3)
+
+# Gráfico 2: Facturas por hora
+facturas_lista = [facturas_por_hora[h] if h in facturas_por_hora.index else 0 for h in horas]
+axes[0,1].bar(horas, facturas_lista, color='lightcoral', edgecolor='darkred')
+axes[0,1].set_title('📄 Facturas por Hora del Día', fontweight='bold')
+axes[0,1].set_xlabel('Hora')
+axes[0,1].set_ylabel('Número de Facturas')
+axes[0,1].set_xticks(range(6, 24, 2))
+axes[0,1].grid(axis='y', alpha=0.3)
+
+# Gráfico 3: Promedio por hora
+promedio_lista = [promedio_por_hora[h] if h in promedio_por_hora.index else 0 for h in horas]
+axes[1,0].bar(horas, promedio_lista, color='lightgreen', edgecolor='darkgreen')
+axes[1,0].set_title('📊 Promedio por Factura por Hora', fontweight='bold')
+axes[1,0].set_xlabel('Hora')
+axes[1,0].set_ylabel('Promedio ($)')
+axes[1,0].set_xticks(range(6, 24, 2))
+axes[1,0].grid(axis='y', alpha=0.3)
+
+# Gráfico 4: Ventas por franja horaria
+franjas_ordenadas = franjas[franjas.index != 'Sin hora']
+nombres_franjas = franjas_ordenadas.index.tolist()
+valores_franjas = franjas_ordenadas['total'].tolist()
+
+axes[1,1].pie(valores_franjas, labels=nombres_franjas, autopct='%1.1f%%', 
+              colors=['#4CAF50', '#FFC107', '#FF6B6B', '#45B7D1', '#96CEB4'])
+axes[1,1].set_title('Distribución de Ventas por Franja Horaria', fontweight='bold')
+
 plt.tight_layout()
 plt.show()
 
-# Gráfico 2: Rentabilidad
-fig2 = None
-if df['Rentabilidad'].sum() > 0:
-    fig2, ax = plt.subplots(figsize=(12, 6))
-    colors_bar = ['#2ecc71' if x > 0 else '#e74c3c' for x in df['Rentabilidad']]
-    bars = ax.bar(meses_abv, df['Rentabilidad'], color=colors_bar, edgecolor='black', alpha=0.8)
-    ax.axhline(y=0, color='black', linestyle='-', linewidth=1)
-    ax.set_xlabel('Mes', fontsize=12)
-    ax.set_ylabel('Rentabilidad (%)', fontsize=12)
-    ax.set_title('Rentabilidad por Mes', fontsize=14, fontweight='bold')
-    ax.set_xticklabels(meses_abv, rotation=45)
-    ax.grid(True, alpha=0.3)
-    for bar, val in zip(bars, df['Rentabilidad']):
-        ax.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.5,
-                f'{val:.1f}%', ha='center', va='bottom', fontsize=9)
-    plt.tight_layout()
-    plt.show()
+# ============================================
+# 9. RECOMENDACIÓN FINAL
+# ============================================
+print("\n" + "="*60)
+print("💡 RECOMENDACIÓN FINAL DE HORARIO")
+print("="*60)
 
-# Gráfico 3: Mapa de Calor (TODOS los meses con datos)
-ventas_diarias = {}
-for r in resultados:
-    mes = r['Mes']
-    for dia, monto in r.get('Ventas_Diarias', {}).items():
-        if mes not in ventas_diarias:
-            ventas_diarias[mes] = {}
-        ventas_diarias[mes][dia] = monto
+# Calcular el horario óptimo
+if len(horas_seleccionadas) >= 7:
+    hora_apertura = min(horas_seleccionadas)
+    hora_cierre = max(horas_seleccionadas)
+    
+    print(f"\n🏪 HORARIO RECOMENDADO:")
+    print(f"   • Apertura: {hora_apertura:02d}:00 AM")
+    print(f"   • Cierre: {hora_cierre:02d}:00 PM")
+    print(f"   • Horas diarias: {hora_cierre - hora_apertura} horas")
+    print(f"   • Días a la semana: 6 días")
+    print(f"   • Total semanal: {(hora_cierre - hora_apertura) * 6} horas")
+    
+    # Identificar las horas menos productivas para considerar cierre
+    print(f"\n⚠️ HORAS MENOS PRODUCTIVAS (Considerar cerrar):")
+    for hora, monto in horas_bajas.items():
+        facturas = facturas_por_hora[hora] if hora in facturas_por_hora.index else 0
+        print(f"   • {hora:02d}:00 - ${monto:,.2f} ({facturas:.0f} facturas)")
+    
+    print(f"\n💡 ESTRATEGIA DE 42 HORAS SEMANALES:")
+    print(f"   • Opción 1: {hora_apertura:02d}:00 a {hora_cierre:02d}:00, 6 días a la semana")
+    print(f"   • Opción 2: 8:00 AM a 3:00 PM, 6 días a la semana (48 horas)")
+    print(f"   • Opción 3: 10:00 AM a 5:00 PM, 6 días a la semana (42 horas)")
+    
+    print(f"\n📈 IMPACTO DE CADA OPCIÓN:")
+    print(f"   • Opción 1: Cubre el {sum(ventas_por_hora[h] for h in range(hora_apertura, hora_cierre+1) if h in ventas_por_hora.index) / total_ventas_horas * 100:.1f}% de las ventas")
+    print(f"   • Opción 2: Cubre el {sum(ventas_por_hora[h] for h in range(8, 16) if h in ventas_por_hora.index) / total_ventas_horas * 100:.1f}% de las ventas")
+    print(f"   • Opción 3: Cubre el {sum(ventas_por_hora[h] for h in range(10, 18) if h in ventas_por_hora.index) / total_ventas_horas * 100:.1f}% de las ventas")
 
-fig3 = None
-if ventas_diarias:
-    df_calor = pd.DataFrame(index=range(1, 32))
-    for mes, datos in ventas_diarias.items():
-        df_calor[mes] = pd.Series(datos)
-    df_calor = df_calor.fillna(0)
-    # Ordenar columnas según el orden del DataFrame
-    columnas_ordenadas = [m for m in df['Mes'].tolist() if m in df_calor.columns]
-    if columnas_ordenadas:
-        df_calor = df_calor[columnas_ordenadas]
-    fig3, ax = plt.subplots(figsize=(14, 8))
-    sns.heatmap(df_calor, cmap='YlOrRd', annot=True, fmt='.0f',
-                cbar_kws={'label': 'Ventas ($)'}, linewidths=0.5, linecolor='white')
-    plt.title('🔥 Mapa de Calor - Ventas por Día y Mes', fontsize=14, fontweight='bold')
-    plt.xlabel('Mes', fontsize=12)
-    plt.ylabel('Día del Mes', fontsize=12)
-    plt.tight_layout()
-    plt.show()
-
-# ============================================================
-# FUNCIONES DE FORMATO
-# ============================================================
-def formato_cop(valor):
-    if pd.isna(valor) or valor == 0:
-        return "$0"
-    return f"${valor:,.0f}".replace(",", ".")
-
-def formato_porc(valor):
-    if pd.isna(valor) or valor == 0:
-        return "0%"
-    return f"{valor:,.2f}%".replace(",", "X").replace(".", ",").replace("X", ".")
-
-# ============================================================
-# GENERAR INFORME PDF
-# ============================================================
-print("\n" + "="*70)
-print("📄 GENERANDO INFORME PDF")
-print("="*70)
-
-nombre_pdf = f"Informe_King_Cholao_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
-doc = SimpleDocTemplate(nombre_pdf, pagesize=letter,
-                        rightMargin=0.75*cm, leftMargin=0.75*cm,
-                        topMargin=1*cm, bottomMargin=1*cm)
-
-styles = getSampleStyleSheet()
-style_title = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=18, alignment=TA_CENTER, spaceAfter=5)
-style_subtitle = ParagraphStyle('SubTitle', parent=styles['Heading4'], fontSize=10, alignment=TA_CENTER, textColor=colors.grey, spaceAfter=15)
-style_h2 = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=14, spaceAfter=10)
-style_cell = ParagraphStyle('Cell', parent=styles['Normal'], fontSize=8, alignment=TA_CENTER)
-style_cell_right = ParagraphStyle('CellRight', parent=styles['Normal'], fontSize=8, alignment=TA_RIGHT)
-style_cell_left = ParagraphStyle('CellLeft', parent=styles['Normal'], fontSize=8, alignment=TA_LEFT)
-
-story = []
-
-story.append(Paragraph("KING CHOLAO", style_title))
-story.append(Paragraph(f"INFORME FINANCIERO - {datetime.now().year}", style_subtitle))
-story.append(Spacer(1, 0.3*cm))
-
-# KPI
-kpi_data = [
-    ["Ventas Totales", total_ventas, '#2E86C1'],
-    ["Gastos Totales", total_gastos, '#E74C3C'],
-    ["Ganancia Total", total_ganancia, '#28B463'],
-    ["Rentabilidad Prom.", rentabilidad_promedio, '#F39C12']
-]
-
-kpi_table_data = []
-for label, valor, color in kpi_data:
-    texto = formato_porc(valor) if 'Rentabilidad' in label else formato_cop(valor)
-    kpi_table_data.append([
-        Paragraph(f'<para align="center" fontSize="10" textColor="white"><b>{label}</b></para>', 
-                  ParagraphStyle('', parent=styles['Normal'], alignment=TA_CENTER)),
-        Paragraph(f'<para align="center" fontSize="14" textColor="white"><b>{texto}</b></para>',
-                  ParagraphStyle('', parent=styles['Normal'], alignment=TA_CENTER))
-    ])
-
-kpi_table = Table(kpi_table_data, colWidths=[2*inch, 2.5*inch])
-for i, (_, _, color) in enumerate(kpi_data):
-    kpi_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, i), (1, i), color),
-        ('ALIGN', (0, i), (1, i), 'CENTER'),
-        ('VALIGN', (0, i), (1, i), 'MIDDLE'),
-        ('TOPPADDING', (0, i), (1, i), 8),
-        ('BOTTOMPADDING', (0, i), (1, i), 8),
-    ]))
-kpi_table.setStyle(TableStyle([
-    ('GRID', (0,0), (-1,-1), 1, colors.white),
-    ('BOX', (0,0), (-1,-1), 2, colors.black),
-]))
-story.append(kpi_table)
-story.append(Spacer(1, 0.5*cm))
-
-# Resumen
-resumen = f"<b>Mejor Mes:</b> {mejor_mes['Mes']} ({formato_cop(mejor_mes['Ventas_Total'])}) | <b>Peor Mes:</b> {peor_mes['Mes']} ({formato_cop(peor_mes['Ventas_Total'])})"
-if 'mas_rentable' in locals():
-    resumen += f" | <b>Más Rentable:</b> {mas_rentable['Mes']} ({formato_porc(mas_rentable['Rentabilidad'])})"
-story.append(Paragraph(resumen, ParagraphStyle('Resumen', parent=styles['Normal'], fontSize=9, alignment=TA_CENTER, textColor=colors.darkgrey)))
-story.append(Spacer(1, 0.5*cm))
-
-# Insertar gráficos
-def fig_to_image(fig, width=6*inch, height=3.5*inch):
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=120, bbox_inches='tight')
-    buf.seek(0)
-    return Image(buf, width=width, height=height)
-
-story.append(Paragraph("Evolución Mensual - Ventas vs Gastos", style_h2))
-story.append(fig_to_image(fig1, width=6*inch, height=3*inch))
-story.append(Spacer(1, 0.3*cm))
-
-if fig2 is not None:
-    story.append(Paragraph("Rentabilidad por Mes", style_h2))
-    story.append(fig_to_image(fig2, width=6*inch, height=3*inch))
-    story.append(Spacer(1, 0.3*cm))
-
-if fig3 is not None:
-    story.append(Paragraph("Mapa de Calor - Ventas Diarias", style_h2))
-    story.append(fig_to_image(fig3, width=6*inch, height=3.5*inch))
-    story.append(Spacer(1, 0.3*cm))
-
-story.append(PageBreak())
-
-# Tabla Ventas
-story.append(Paragraph("Ventas por Mes (Efectivo vs Tarjeta)", style_h2))
-ventas_tabla = [[Paragraph("<b>Mes</b>", style_cell), 
-                 Paragraph("<b>Efectivo</b>", style_cell_right),
-                 Paragraph("<b>Tarjeta</b>", style_cell_right),
-                 Paragraph("<b>Total</b>", style_cell_right)]]
-
-for i, m in enumerate(meses_abv):
-    ventas_tabla.append([
-        Paragraph(m, style_cell),
-        Paragraph(formato_cop(df['Ventas_Efectivo'].iloc[i]), style_cell_right),
-        Paragraph(formato_cop(df['Ventas_Tarjeta'].iloc[i]), style_cell_right),
-        Paragraph(formato_cop(ventas_total[i]), style_cell_right)
-    ])
-
-ventas_tabla.append([
-    Paragraph("<b>TOTAL</b>", style_cell),
-    Paragraph(formato_cop(df['Ventas_Efectivo'].sum()), style_cell_right),
-    Paragraph(formato_cop(df['Ventas_Tarjeta'].sum()), style_cell_right),
-    Paragraph(formato_cop(total_ventas), style_cell_right)
-])
-
-t_ventas = Table(ventas_tabla, colWidths=[1.2*inch, 1.6*inch, 1.6*inch, 1.8*inch])
-t_ventas.setStyle(TableStyle([
-    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1B4F72')), ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-    ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,0), 10),
-    ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.whitesmoke, colors.HexColor('#E8F8F5')]),
-    ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#D5D8DC')), ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-    ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BOX', (0,0), (-1,-1), 1.5, colors.black),
-]))
-story.append(t_ventas)
-story.append(Spacer(1, 0.5*cm))
-
-# Tabla Gastos
-story.append(Paragraph("Gastos Desglosados por Mes", style_h2))
-gastos_tabla = [[Paragraph("<b>Mes</b>", style_cell),
-                 Paragraph("<b>Compras</b>", style_cell_right),
-                 Paragraph("<b>Personal</b>", style_cell_right),
-                 Paragraph("<b>Servicios</b>", style_cell_right),
-                 Paragraph("<b>Otros</b>", style_cell_right),
-                 Paragraph("<b>Total</b>", style_cell_right)]]
-
-for i, m in enumerate(meses_abv):
-    gastos_tabla.append([
-        Paragraph(m, style_cell),
-        Paragraph(formato_cop(df['Gastos_Compras'].iloc[i]), style_cell_right),
-        Paragraph(formato_cop(df['Gastos_Personal'].iloc[i]), style_cell_right),
-        Paragraph(formato_cop(df['Gastos_Servicios'].iloc[i]), style_cell_right),
-        Paragraph(formato_cop(df['Gastos_Otros'].iloc[i]), style_cell_right),
-        Paragraph(formato_cop(gastos_total[i]), style_cell_right)
-    ])
-
-gastos_tabla.append([
-    Paragraph("<b>TOTAL</b>", style_cell),
-    Paragraph(formato_cop(df['Gastos_Compras'].sum()), style_cell_right),
-    Paragraph(formato_cop(df['Gastos_Personal'].sum()), style_cell_right),
-    Paragraph(formato_cop(df['Gastos_Servicios'].sum()), style_cell_right),
-    Paragraph(formato_cop(df['Gastos_Otros'].sum()), style_cell_right),
-    Paragraph(formato_cop(total_gastos), style_cell_right)
-])
-
-t_gastos = Table
+print("\n" + "="*60)
+print("✅ ANÁLISIS DE HORARIOS COMPLETADO")
+print("="*60)
